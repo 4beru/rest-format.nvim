@@ -301,54 +301,78 @@ end
 ---@return string[]
 ---@return boolean ok Whether formatting is done with `gq`
 function utils.gq_lines(lines, filetype)
-    logger.debug("formatting with `gq`")
+    logger.debug("Attempting to format content with filetype: " .. filetype)
     if #lines == 0 then
         logger.debug("content is empty. Formatting is canceled")
-        return lines, true
+        return lines, true -- Or false, as no actual formatting happened
     end
     local format_buf = vim.api.nvim_create_buf(false, true)
-    local ok, errmsg = pcall(vim.api.nvim_set_option_value, "filetype", filetype, { buf = format_buf })
-    if not ok then
-        local msg = ("Can't set filetype to '%s' (%s). Formatting is canceled"):format(filetype, errmsg)
+    local ok_set_ft, errmsg_ft = pcall(vim.api.nvim_set_option_value, "filetype", filetype, { buf = format_buf })
+    if not ok_set_ft then
+        local msg = ("Can't set filetype to '%s' (%s). Formatting is canceled"):format(filetype, errmsg_ft)
         logger.warn(msg)
         vim.notify(msg, vim.log.levels.WARN, { title = "rest.nvim" })
+        vim.api.nvim_buf_delete(format_buf, { force = true }) -- Clean up temp buffer
         return lines, false
     end
     vim.api.nvim_buf_set_lines(format_buf, 0, -1, false, lines)
+
     local formatexpr = vim.bo[format_buf].formatexpr
     local formatprg = vim.bo[format_buf].formatprg
-    if formatexpr:match("^v:lua%.vim%.lsp%.formatexpr%(.*%)$") then
-        local clients_count = #vim.lsp.get_clients({ bufnr = format_buf })
-        logger.warn(
-            ("formatexpr is set to `%s` but %d clients are attached to the buffer %d."):format(
-                formatexpr,
-                clients_count,
-                format_buf
+
+    -- Definir los pretty-printers específicos por filetype
+    local pretty_printers = {
+        json = "%!jq .", -- El '.' asegura que jq intente parsear el input completo
+        xml = "%!xmllint --format -", -- Necesitas xmllint instalado
+        html = "%!tidy -q -i --show-body-only yes -", -- Necesitas tidy instalado
+
+    }
+
+    local format_command
+
+    if pretty_printers[filetype] then
+        format_command = pretty_printers[filetype]
+        logger.debug(("Using specific pretty-printer for %s: %s"):format(filetype, format_command))
+    elseif formatexpr and formatexpr ~= "" and not formatexpr:match("^v:lua%.vim%.lsp%.formatexpr%(.*%)$") then
+
+        logger.debug(("Using 'gggqG' (via formatexpr: %s) for %s filetype."):format(formatexpr, filetype))
+        format_command = "silent normal gggqG"
+    elseif formatprg and formatprg ~= "" then
+        logger.debug(("Using 'gggqG' (via formatprg: %s) for %s filetype."):format(formatprg, filetype))
+        format_command = "silent normal gggqG"
+    else
+        logger.debug(
+            ("No specific pretty-printer, formatexpr, or formatprg found for %s filetype. Formatting is canceled"):format(
+                filetype
             )
         )
-        logger.warn("Skipping lsp formatexpr")
-        formatexpr = ""
-    end
-    if formatexpr ~= "" then
-        logger.debug(("formatting %s filetype with formatexpr=%s"):format(filetype, formatexpr))
-    elseif formatprg ~= "" then
-        logger.debug(("formatting %s filetype with formatprg=%s"):format(filetype, formatprg))
-    else
-        logger.debug(("can't find formatexpr or formatprg for %s filetype. Formatting is canceled"):format(filetype))
+        vim.api.nvim_buf_delete(format_buf, { force = true }) -- Clean up temp buffer
         return lines, false
     end
+
+    local formatting_succeeded = false
     vim.api.nvim_buf_call(format_buf, function()
-        -- HACK: dirty fix for neovim/neovim#30593
-        local gq_ok, res = pcall(vim.api.nvim_command, "silent normal gggqG")
-        if not gq_ok then
-            local msg = ("formatting %s filetype failed"):format(filetype)
-            logger.warn(msg, res)
-            vim.notify(msg, vim.log.levels.WARN, { title = "rest.nvim" })
+        local gq_ok, res_gq = pcall(vim.api.nvim_command, format_command)
+        if gq_ok then
+            formatting_succeeded = true
+        else
+            local msg = ("Formatting %s filetype with command '%s' failed"):format(filetype, format_command)
+            logger.warn(msg, res_gq)
+            vim.notify(msg .. (res_gq and (": " .. tostring(res_gq)) or ""), vim.log.levels.WARN, { title = "rest.nvim" })
+
         end
     end)
-    local buf_lines = vim.api.nvim_buf_get_lines(format_buf, 0, -1, false)
+
+    local buf_lines
+    if formatting_succeeded then
+        buf_lines = vim.api.nvim_buf_get_lines(format_buf, 0, -1, false)
+    else
+        buf_lines = lines -- Devolver las líneas originales si el formateo falló
+    end
+
     vim.api.nvim_buf_delete(format_buf, { force = true })
-    return buf_lines, true
+    return buf_lines, formatting_succeeded
 end
+
 
 return utils
