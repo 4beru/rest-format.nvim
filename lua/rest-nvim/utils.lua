@@ -325,7 +325,6 @@ function utils.gq_lines(lines, filetype)
         json = "%!jq .", -- El '.' asegura que jq intente parsear el input completo
         xml = "%!xmllint --format -", -- Necesitas xmllint instalado
         html = "%!tidy -q -i --show-body-only yes -", -- Necesitas tidy instalado
-
     }
 
     local format_command
@@ -334,7 +333,6 @@ function utils.gq_lines(lines, filetype)
         format_command = pretty_printers[filetype]
         logger.debug(("Using specific pretty-printer for %s: %s"):format(filetype, format_command))
     elseif formatexpr and formatexpr ~= "" and not formatexpr:match("^v:lua%.vim%.lsp%.formatexpr%(.*%)$") then
-
         logger.debug(("Using 'gggqG' (via formatexpr: %s) for %s filetype."):format(formatexpr, filetype))
         format_command = "silent normal gggqG"
     elseif formatprg and formatprg ~= "" then
@@ -358,8 +356,11 @@ function utils.gq_lines(lines, filetype)
         else
             local msg = ("Formatting %s filetype with command '%s' failed"):format(filetype, format_command)
             logger.warn(msg, res_gq)
-            vim.notify(msg .. (res_gq and (": " .. tostring(res_gq)) or ""), vim.log.levels.WARN, { title = "rest.nvim" })
-
+            vim.notify(
+                msg .. (res_gq and (": " .. tostring(res_gq)) or ""),
+                vim.log.levels.WARN,
+                { title = "rest.nvim" }
+            )
         end
     end)
 
@@ -373,6 +374,5 @@ function utils.gq_lines(lines, filetype)
     vim.api.nvim_buf_delete(format_buf, { force = true })
     return buf_lines, formatting_succeeded
 end
-
 
 return utils
